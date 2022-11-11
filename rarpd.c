@@ -495,7 +495,9 @@ int serve_it(int fd)
 			sprintf(tmpname, "if%d", sll.sll_ifindex);
 
 		if (verbose)
-			syslog(LOG_INFO, "RARP request from %s on %s",
+			syslog(LOG_INFO, "RARP request%s from %s on %s",
+				(sll.sll_protocol == htons(ETH_P_ARP))
+					? " (ARP-packet)" : "",
 				tmpbuf, tmpname);
 	}
 
@@ -668,7 +670,7 @@ int main(int argc, char **argv)
 		pset[1].fd = socket(PF_PACKET, SOCK_DGRAM, 0);
 		if (pset[1].fd >= 0) {
 			load_arp_bpflet(pset[1].fd);
-			psize = 1;
+			psize++;
 		}
 	}
 
@@ -681,7 +683,7 @@ int main(int argc, char **argv)
 		if (bind(pset[1].fd, (struct sockaddr*)&sll, sizeof(sll)) < 0) {
 			close(pset[1].fd);
 			pset[1].fd = -1;
-			psize = 1;
+			psize--;
 		}
 	}
 	if (pset[0].fd >= 0) {
