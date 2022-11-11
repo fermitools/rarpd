@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <syslog.h>
+#include <stdlib.h>
 #include <dirent.h>
 #include <malloc.h>
 #include <string.h>
@@ -31,6 +32,7 @@
 #include <asm/types.h>
 #include <linux/if_packet.h>
 #include <linux/filter.h>
+
 
 int do_reload = 1;
 
@@ -475,7 +477,7 @@ void serve_it(int fd)
 			tmpname[IFNAMSIZ-1] = 0;
 		} else
 			sprintf(tmpname, "if%d", sll.sll_ifindex);
-		syslog(LOG_INFO, "RARP request from %s on if%d",tmpbuf,tmpname);
+		syslog(LOG_INFO, "RARP request from %s on %s",tmpbuf,tmpname);
 	}
 
 	/* Sanity checks */
