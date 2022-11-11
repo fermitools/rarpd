@@ -33,6 +33,9 @@
 #include <linux/if_packet.h>
 #include <linux/filter.h>
 
+#ifndef ETH_ALEN
+# define ETH_ALEN 6	/* Ethernet address length. */
+#endif
 
 int do_reload = 1;
 
@@ -57,7 +60,7 @@ struct rarpiflink
 	int	       	index;
 	int		hatype;
 	u_int8_t	lladdr[ETH_ALEN];
-	unsigned char	name[IFNAMSIZ];
+	char		name[IFNAMSIZ];
 	struct rarpifaddr	*ifa_list;
 } *ifl_list;
 
@@ -82,7 +85,7 @@ struct rarp_map
 
 void usage()
 {
-	fprintf(stderr, "Usage: rarpd [ -dveaA ] [ -b tftpdir ] [ interface]\n");
+	fprintf(stderr, "Usage: rarpd [ -dveaAo ] [ -b tftpdir ] [ interface]\n");
 	exit(1);
 }
 
@@ -219,6 +222,7 @@ void load_if()
 
 void configure()
 {
+	syslog(LOG_INFO, "Building list of addresses per interface.");
 	load_if();
 	load_db();
 }
