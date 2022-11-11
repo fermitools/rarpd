@@ -424,7 +424,10 @@ void arp_advise(int ifindex, u_int8_t *lladdr, int lllen, __u32 ipaddr)
 	close(fd);
 }
 
-void serve_it(int fd)
+#define SERVEIT_KNOWN 0
+#define SERVEIT_NOTSOCK 1
+
+int serve_it(int fd)
 {
 	unsigned char buf[1024];
 	struct sockaddr_ll sll;
@@ -435,32 +438,41 @@ void serve_it(int fd)
 	int n;
 	char tmpbuf[16 * 3], tmpname[IFNAMSIZ];
 
+	if (fd < 0)
+		return SERVEIT_KNOWN;
+
 	n = recvfrom(fd, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr*)&sll, &sll_len);
 	if (n<0) {
 		if (errno != EINTR)
 			syslog(LOG_ERR, "recvfrom: %m");
-		return;
+
+		if (errno == ENOTSOCK) {
+			syslog(LOG_ERR, "Warning: Removing a socket from list. Send HUP to renew list.");
+			return SERVEIT_NOTSOCK;
+		}
+
+		return SERVEIT_KNOWN;
 	}
 
 	/* Do not accept packets for other hosts and our own ones */
 	if (sll.sll_pkttype != PACKET_BROADCAST &&
 	    sll.sll_pkttype != PACKET_MULTICAST &&
 	    sll.sll_pkttype != PACKET_HOST)
-		return;
+		return SERVEIT_KNOWN;
 
 	if (ifidx && sll.sll_ifindex != ifidx)
-		return;
+		return SERVEIT_KNOWN;
 
 	if (n<sizeof(*a)) {
 		syslog(LOG_ERR, "truncated arp packet; len=%d", n);
-		return;
+		return SERVEIT_KNOWN;
 	}
 
 	/* Accept only RARP requests */
 	if (a->ar_op != htons(ARPOP_RREQUEST))
-		return;
+		return SERVEIT_KNOWN;
 
-	if (verbose) {
+	{
 		int i;
 		char *ptr = tmpbuf;
 		struct rarpiflink *ifl;
@@ -481,7 +493,10 @@ void serve_it(int fd)
 			tmpname[IFNAMSIZ-1] = 0;
 		} else
 			sprintf(tmpname, "if%d", sll.sll_ifindex);
-		syslog(LOG_INFO, "RARP request from %s on %s",tmpbuf,tmpname);
+
+		if (verbose)
+			syslog(LOG_INFO, "RARP request from %s on %s",
+				tmpbuf, tmpname);
 	}
 
 	/* Sanity checks */
@@ -489,12 +504,12 @@ void serve_it(int fd)
 	/* 1. IP only -> pln==4 */
 	if (a->ar_pln != 4) {
 		syslog(LOG_ERR, "interesting rarp_req plen=%d", a->ar_pln);
-		return;
+		return SERVEIT_KNOWN;
 	}
 	/* 2. ARP protocol must be IP */
 	if (a->ar_pro != htons(ETH_P_IP)) {
 		syslog(LOG_ERR, "rarp protocol is not IP %04x", ntohs(a->ar_pro));
-		return;
+		return SERVEIT_KNOWN;
 	}
 	/* 3. ARP types must match */
 	if (htons(sll.sll_hatype) != a->ar_hrd) {
@@ -505,25 +520,25 @@ void serve_it(int fd)
 				break;
 		default:
 			syslog(LOG_ERR, "rarp htype mismatch");
-			return;
+			return SERVEIT_KNOWN;
 		}
 	}
 	/* 3. LL address lengths must be equal */
 	if (a->ar_hln != sll.sll_halen) {
 		syslog(LOG_ERR, "rarp hlen mismatch");
-		return;
+		return SERVEIT_KNOWN;
 	}
 	/* 4. Check packet length */
 	if (sizeof(*a) + 2*4 + 2*a->ar_hln > n) {
 		syslog(LOG_ERR, "truncated rarp request; len=%d", n);
-		return;
+		return SERVEIT_KNOWN;
 	}
 	/* 5. Silly check: if this guy set different source
 	      addresses in MAC header and in ARP, he is insane
 	 */
 	if (memcmp(sll.sll_addr, a+1, sll.sll_halen)) {
 		syslog(LOG_ERR, "this guy set different his lladdrs in arp and header");
-		return;
+		return SERVEIT_KNOWN;
 	}
 	/* End of sanity checks */
 
@@ -531,7 +546,7 @@ void serve_it(int fd)
 	rmap = rarp_lookup(sll.sll_ifindex, sll.sll_hatype,
 			   sll.sll_halen, (unsigned char*)(a+1) + sll.sll_halen + 4);
 	if (rmap == NULL)
-		return;
+		return SERVEIT_KNOWN;
 
 	/* Prepare reply. It is almost ready, we only
 	   replace ARP packet type, put our lladdr and
@@ -541,9 +556,9 @@ void serve_it(int fd)
 	a->ar_op = htons(ARPOP_RREPLY);
 	ptr = (unsigned char*)(a+1);
 	if (put_mylladdr(&ptr, sll.sll_ifindex, rmap->lladdr_len))
-		return;
+		return SERVEIT_KNOWN;
 	if (put_myipaddr(&ptr, sll.sll_ifindex, rmap->ipaddr))
-		return;
+		return SERVEIT_KNOWN;
 	/* It is already filled */
 	ptr += rmap->lladdr_len;
 	memcpy(ptr, &rmap->ipaddr, 4);
@@ -560,6 +575,8 @@ void serve_it(int fd)
 	alarm(5);
 	sendto(fd, buf, ptr - buf, 0, (struct sockaddr*)&sll, sizeof(sll));
 	alarm(0);
+
+	return SERVEIT_KNOWN;
 }
 
 void catch_signal(int sig, void (*handler)(int))
@@ -603,6 +620,7 @@ int main(int argc, char **argv)
 
 		case 'd':
 			++debug;
+			++verbose;	/* Activate additional messages! */
 			break;
 
 		case 'v':
@@ -709,7 +727,15 @@ int main(int argc, char **argv)
 		setsid();
 	}
 
+#ifdef LOG_PERROR
+	openlog("rarpd",
+		(debug) ? (LOG_PID | LOG_CONS | LOG_PERROR)
+			: (LOG_PID | LOG_CONS),
+		LOG_DAEMON);
+#else
 	openlog("rarpd", LOG_PID | LOG_CONS, LOG_DAEMON);
+#endif /* !defined LOG_PERROR */
+
 	catch_signal(SIGALRM, sig_alarm);
 	catch_signal(SIGHUP, sig_hup);
 
@@ -736,8 +762,9 @@ int main(int argc, char **argv)
 			continue;
 		}
 		for (i=0; i<psize; i++) {
-			if (pset[i].revents&EVENTS)
-				serve_it(pset[i].fd);
+			if (pset[i].revents&EVENTS && pset[i].fd >= 0)
+				if (serve_it(pset[i].fd) == SERVEIT_NOTSOCK)
+					pset[i].fd = -1;
 		}
 	}
 }
