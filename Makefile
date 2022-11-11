@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-O2 -Wall -g $(DEFINES)
 
-OBJ=rarpd.o ethernet.o
+OBJ=rarpd.o #ethernet.o
 
 all: rarpd
 
