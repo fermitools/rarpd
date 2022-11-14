@@ -218,6 +218,7 @@ void load_if()
 			}
 		}
 	}
+	close(fd);
 }
 
 void configure()
@@ -237,12 +238,13 @@ int bootable(__u32 addr)
 	d = opendir(tftp_dir);
 	if (d == NULL) {
 		syslog(LOG_ERR, "opendir: %m");
-		return 0;
+		goto done_bootable;
 	}
 	while ((dent = readdir(d)) != NULL) {
 		if (strncmp(dent->d_name, name, 8) == 0)
 			break;
 	}
+done_bootable:
 	closedir(d);
 	return dent != NULL;
 }
